@@ -1,0 +1,325 @@
+@inject IJSRuntime JS
+@using System.Text.Json.Serialization
+
+<div class="app-frame">
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="brand"><img src="icon-192.png" width="44" height="44" alt=""><div><strong>FizikLab</strong><span>Fizik I · Mekanik</span></div></div>
+            <button type="button" class="inverse" @onclick="ToggleExperiments" aria-expanded="@showExperiments.ToString().ToLowerInvariant()">Deney seç</button>
+        </div>
+    </header>
+    <main class="main">
+        @if (showExperiments)
+        {
+            <section class="experiment-picker" aria-label="Deneyler">
+                @for (int i = 0; i < experiments.Length; i++)
+                {
+                    int index = i;
+                    <button type="button" class="experiment-choice @(index == selected ? "chosen" : "")" @onclick="() => SelectExperiment(index)">
+                        <span>@(index + 1)</span> @experiments[index].Name
+                    </button>
+                }
+            </section>
+        }
+        <section class="intro">
+            <p class="section-meta">Deney @(selected + 1) · Föy s. @Current.Pages</p>
+            <h1>@Current.Name</h1>
+            <p>@Current.Intro</p>
+        </section>
+        <nav class="tabs" aria-label="Deney ekranı">
+            @for (int i = 0; i < TabNames.Length; i++)
+            {
+                int index = i;
+                <button type="button" class="@(tab == index ? "selected" : "")" aria-pressed="@((tab == index).ToString().ToLowerInvariant())"
+                        @onclick="() => OpenTab(index)">@TabNames[index]</button>
+            }
+        </nav>
+        @if (storageProblem)
+        {
+            <p class="notice" role="status">Safari cihaz kaydına erişemiyor. Ölçümler bu oturumda kullanılabilir.</p>
+        }
+        @if (tab == 0)
+        {
+            <div class="measurements">
+                <section class="card">
+                    <h2>Deney ayarları</h2>
+                    <div class="field-grid">
+                        @for (int i = 0; i < Current.Options.Length; i++)
+                        {
+                            int col = i;
+                            <label @key="@(selected * 100 + col)">@Current.Options[col].Label
+                                <input inputmode="@(Current.Options[col].Label.Contains("x₀") ? "text" : "decimal")" autocomplete="off" spellcheck="false" value="@Draft.Options[col]"
+                                       @oninput="e => EditSetting(col, e.Value?.ToString())" />
+                            </label>
+                        }
+                    </div>
+                </section>
+                @for (int i = 0; i < Current.Groups.Length; i++)
+                {
+                    int groupIndex = i;
+                    var group = Current.Groups[groupIndex];
+                    var rows = Draft.Measurements[groupIndex];
+                    int row = positions[selected][groupIndex];
+                    <section class="card" @key="group">
+                        <h2>@group.Title</h2>
+                        <p class="help">@group.Hint</p>
+                        <div class="row-toolbar">
+                            <button type="button" class="secondary" disabled="@(row == 0)" @onclick="() => Move(groupIndex, row - 1)">Önceki</button>
+                            <label class="visually-hidden" for="@($"row-{groupIndex}")">Ölçüm satırı</label>
+                            <select id="@($"row-{groupIndex}")" value="@row" @onchange="e => SelectRow(groupIndex, e)">
+                                @for (int r = 0; r < rows.Length; r++) { <option value="@r">Satır @(r + 1) / @rows.Length</option> }
+                            </select>
+                            <button type="button" class="secondary" disabled="@(row == rows.Length - 1)" @onclick="() => Move(groupIndex, row + 1)">Sonraki</button>
+                        </div>
+                        <div class="field-grid" @key="row">
+                            @for (int j = 0; j < group.Columns.Length; j++)
+                            {
+                                int col = j;
+                                <label>@group.Columns[col]
+                                    <input inputmode="@(AllowsNegative(group.Columns[col]) ? "text" : "decimal")" autocomplete="off" spellcheck="false"
+                                           value="@rows[row][col]" @oninput="e => EditMeasurement(groupIndex, row, col, e.Value?.ToString())" />
+                                </label>
+                            }
+                        </div>
+                        <div class="group-actions">
+                            <details>
+                                <summary>Tablo yapıştır</summary>
+                                <label class="paste-label">Başlıksız @group.Columns.Length sütunu seçili satırdan başlayarak yapıştır.
+                                    <textarea rows="3" @bind="pasteBuffers[groupIndex]" @bind:event="oninput"></textarea>
+                                </label>
+                                <button type="button" class="secondary" @onclick="() => Paste(groupIndex)">Satırlara aktar</button>
+                                @if (!string.IsNullOrEmpty(pasteMessages[groupIndex]))
+                                {
+                                    <p class="help" role="status">@pasteMessages[groupIndex]</p>
+                                }
+                            </details>
+                            @if (!group.FixedRows)
+                            {
+                                <button type="button" class="secondary" disabled="@(rows.Length >= 150)" @onclick="() => AddRow(groupIndex)">Satır ekle</button>
+                            }
+                        </div>
+                    </section>
+                }
+            </div>
+            <div class="calculate"><button type="button" class="primary" @onclick="Calculate">Hesapla</button></div>
+        }
+        else if (CurrentReport is not Report report)
+        {
+            <section class="card empty"><p>Ölçümleri girdikten sonra <strong>Hesapla</strong>’ya bas.</p><button type="button" class="secondary" @onclick="() => OpenTab(0)">Ölçümlere dön</button></section>
+        }
+        else if (tab == 1)
+        {
+            <div class="results">
+                @if (report.Warnings.Count > 0)
+                {
+                    <section class="notice"><h2>Kontrol edilecek noktalar</h2><ul>@foreach (var warning in report.Warnings) { <li>@warning</li> }</ul></section>
+                }
+                @if (!report.HasResults)
+                {
+                    <section class="card empty"><p>Hesaplanabilir ölçüm bulunamadı.</p></section>
+                }
+                @foreach (var table in report.Tables.Where(t => t.Rows.Count > 0))
+                {
+                    <section class="card">
+                        <h2>@table.Title</h2>
+                        <div class="table-scroll" role="region" tabindex="0" aria-label="@table.Title">
+                            <table>
+                                <thead><tr>@foreach (var header in table.Headers) { <th scope="col">@header</th> }</tr></thead>
+                                <tbody>@foreach (var row in table.Rows) { <tr>@foreach (var cell in row) { <td>@cell</td> }</tr> }</tbody>
+                            </table>
+                        </div>
+                    </section>
+                }
+                @foreach (var note in report.Notes)
+                {
+                    <section class="card"><h2>@note.Key</h2><p>@note.Value</p></section>
+                }
+            </div>
+        }
+        else
+        {
+            var available = report.Plots.Where(p => p.Traces.Count > 0).ToArray();
+            if (available.Length == 0)
+            {
+                <section class="card empty"><p>Grafik için yeterli ölçüm bulunamadı.</p></section>
+            }
+            else
+            {
+                var plot = available[plotIndex];
+                <section class="card chart-card">
+                    @if (available.Length > 1)
+                    {
+                        <label class="chart-picker">Grafik
+                            <select value="@plotIndex" @onchange="SelectPlot">
+                                @for (int i = 0; i < available.Length; i++) { <option value="@i">@available[i].Title</option> }
+                            </select>
+                        </label>
+                    }
+                    <h2>@plot.Title</h2>
+                    <canvas @ref="canvas" aria-label="@($"{plot.Title}. Yatay eksen {plot.X}. Dikey eksen {plot.Y}.")" role="img"></canvas>
+                    <p class="help">@plot.Caption</p>
+                    <button type="button" class="secondary" id="save-chart">PNG olarak kaydet</button>
+                </section>
+            }
+        }
+    </main>
+</div>
+
+@code {
+    private static readonly string[] TabNames = ["Ölçümler", "Sonuçlar", "Grafikler"];
+    private static readonly Experiment[] experiments = Mechanics.Create();
+    private readonly MeasurementDraft[] drafts = experiments.Select(MeasurementDraft.From).ToArray();
+    private readonly Report[] reports = new Report[experiments.Length];
+    private readonly int[][] positions = experiments.Select(e => new int[e.Groups.Length]).ToArray();
+    private int selected, tab, plotIndex;
+    private string[] pasteBuffers = new string[4], pasteMessages = new string[4];
+    private bool showExperiments, storageProblem, scrollPending, chartPending;
+    private ElementReference canvas;
+    private Experiment Current => experiments[selected];
+    private MeasurementDraft Draft => drafts[selected];
+    private Report CurrentReport => reports[selected];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                var restored = await JS.InvokeAsync<string>("fizikLab.read", "selected");
+                if (int.TryParse(restored, out int index) && index >= 0 && index < experiments.Length) selected = index;
+                for (int i = 0; i < drafts.Length; i++)
+                {
+                    string saved = await JS.InvokeAsync<string>("fizikLab.read", $"draft-{i}");
+                    if (saved is null) continue;
+                    try
+                    {
+                        var draft = JsonSerializer.Deserialize(saved, DraftJson.Default.MeasurementDraft);
+                        if (draft?.Matches(experiments[i]) == true) drafts[i] = draft;
+                    }
+                    catch (JsonException) { }
+                }
+            }
+            catch (JSException) { storageProblem = true; }
+            StateHasChanged();
+        }
+        if (scrollPending)
+        {
+            scrollPending = false;
+            await JS.InvokeVoidAsync("fizikLab.top");
+        }
+        if (chartPending && tab == 2)
+        {
+            chartPending = false;
+            var plot = CurrentReport?.Plots.Where(p => p.Traces.Count > 0).ElementAtOrDefault(plotIndex);
+            if (plot is not null)
+                await JS.InvokeVoidAsync("fizikLab.draw", canvas, new
+                {
+                    plot.Title, plot.X, plot.Y, plot.Caption, plot.EqualAxes,
+                    Traces = plot.Traces.Select(t => new { t.Label, Style = t.Style.ToString(),
+                        Points = t.Points.Select(p => new[] { p.X, p.Y }).ToArray() }).ToArray()
+                });
+        }
+    }
+
+    private void ToggleExperiments() => showExperiments = !showExperiments;
+
+    private async Task SelectExperiment(int index)
+    {
+        selected = index;
+        tab = plotIndex = 0;
+        showExperiments = false;
+        Array.Clear(pasteBuffers);
+        Array.Clear(pasteMessages);
+        scrollPending = true;
+        await Save("selected", index.ToString());
+    }
+
+    private void OpenTab(int index)
+    {
+        if (tab == index) return;
+        tab = index;
+        showExperiments = false;
+        chartPending = tab == 2;
+        scrollPending = true;
+    }
+
+    private void Move(int group, int row) => positions[selected][group] = row;
+    private void SelectRow(int group, ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out int row) && row >= 0 && row < Draft.Measurements[group].Length)
+            Move(group, row);
+    }
+    private void SelectPlot(ChangeEventArgs args)
+    {
+        if (!int.TryParse(args.Value?.ToString(), out int index)) return;
+        plotIndex = index;
+        chartPending = true;
+    }
+    private static bool AllowsNegative(string column) => column.StartsWith("Δx ilk") || column.StartsWith("x₁") ||
+        column.StartsWith("x denge") || column.StartsWith("x son") || column.StartsWith("φ");
+
+    private async Task EditSetting(int col, string value)
+    {
+        Draft.Options[col] = value;
+        await Commit();
+    }
+    private async Task EditMeasurement(int group, int row, int col, string value)
+    {
+        Draft.Measurements[group][row][col] = value;
+        await Commit();
+    }
+    private async Task AddRow(int group)
+    {
+        var rows = Draft.Measurements[group];
+        if (rows.Length >= 150) return;
+        Draft.Measurements[group] = rows.Append(new string[Current.Groups[group].Columns.Length]).ToArray();
+        Move(group, rows.Length);
+        await Commit();
+    }
+    private async Task Paste(int groupIndex)
+    {
+        string raw = pasteBuffers[groupIndex];
+        if (string.IsNullOrWhiteSpace(raw)) { pasteMessages[groupIndex] = "Önce ölçüm tablosunu yapıştır."; return; }
+        var group = Current.Groups[groupIndex];
+        int start = positions[selected][groupIndex];
+        var rows = Draft.Measurements[groupIndex].ToList();
+        var grid = raw.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n').Split('\n').Select(line => line.Split('\t')).ToArray();
+        if (grid.Any(r => r.Length != group.Columns.Length) || start + grid.Length > (group.FixedRows ? rows.Count : 150))
+        {
+            pasteMessages[groupIndex] = "Sütun sayısı veya kalan satır sayısı bu tabloyla uyuşmuyor.";
+            return;
+        }
+        if (grid.Any(r => r.Any(cell => !string.IsNullOrWhiteSpace(cell) && !Input.TryNumber(cell, out _))))
+        {
+            pasteMessages[groupIndex] = "Sayı olmayan hücreleri ve başlık satırını kontrol et.";
+            return;
+        }
+        for (int i = 0; i < grid.Length; i++)
+        {
+            if (start + i < rows.Count) rows[start + i] = grid[i];
+            else rows.Add(grid[i]);
+        }
+        Draft.Measurements[groupIndex] = rows.ToArray();
+        pasteMessages[groupIndex] = $"{grid.Length} satır aktarıldı.";
+        pasteBuffers[groupIndex] = "";
+        await Commit();
+    }
+    private async Task Commit()
+    {
+        reports[selected] = null;
+        await Save($"draft-{selected}", JsonSerializer.Serialize(Draft, DraftJson.Default.MeasurementDraft));
+    }
+    private async Task Save(string key, string value)
+    {
+        try { await JS.InvokeVoidAsync("fizikLab.write", key, value); }
+        catch (JSException) { storageProblem = true; }
+    }
+    private void Calculate()
+    {
+        var report = new Report();
+        Current.Calculate(new Input(Current, Draft.Options, Draft.Measurements, report), report);
+        reports[selected] = report;
+        plotIndex = 0;
+        OpenTab(1);
+    }
+}

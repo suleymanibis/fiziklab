@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#122132">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="description" content="Fizik I mekanik deneyleri için ölçüm, hesaplama ve grafik uygulaması.">
+  <title>FizikLab</title>
+  <base href="./">
+  <link rel="manifest" href="app.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="icon" href="icon-192.png">
+  <link rel="stylesheet" href="lab.css">
+</head>
+<body>
+  <div id="app"><p class="loading" role="status">FizikLab açılıyor…</p></div>
+  <noscript>FizikLab’ın çalışması için JavaScript açık olmalı.</noscript>
+  <script src="lab.js"></script>
+  <script src="_framework/blazor.webassembly.js" autostart="false"></script>
+  <script>
+    if (window.Blazor) {
+      Blazor.start({applicationCulture:'tr-TR'}).then(() => {
+        if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js').catch(() => {});
+      }).catch(() => { document.querySelector('#app').textContent = 'FizikLab açılamadı. Bağlantını kontrol edip sayfayı yenile.'; });
+    } else {
+      document.querySelector('.loading').textContent = 'FizikLab açılamadı. Bağlantını kontrol edip sayfayı yenile.';
+    }
+  </script>
+</body>
+</html>
